@@ -1,5 +1,9 @@
 teb_local_planner ROS Package
 =============================
+一个小小的修改，teb在实际中若起步和终点有一定夹角，会有一个很大的起步转向，为了避免这一现象，本程序在规划前
+先控制机器人转向全局规划的路径，再进行局部规划，为了使用更改后的teb，请配合使用改动后的move-base，否则无效。
+
+
 
 The teb_local_planner package implements a plugin to the base_local_planner of the 2D navigation stack. 
 The underlying method called Timed Elastic Band locally optimizes the robot's trajectory with respect to trajectory execution time, 
