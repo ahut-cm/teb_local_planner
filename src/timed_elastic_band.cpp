@@ -199,7 +199,7 @@ void TimedElasticBand::setTimeDiffVertexFixed(int index, bool status)
   timediff_vec_.at(index)->setFixed(status);
 }
 
-
+//根据参考时间分辨率删除或插入一个（姿势，dt）对来调整轨迹大小。
 void TimedElasticBand::autoResize(double dt_ref, double dt_hysteresis, int min_samples, int max_samples, bool fast_mode)
 {  
   /// iterate through all TEB states and add/remove states!
@@ -242,7 +242,7 @@ void TimedElasticBand::autoResize(double dt_ref, double dt_hysteresis, int min_s
   }
 }
 
-
+//计算总的过渡时间（和在timediff序列的时间间隔） 
 double TimedElasticBand::getSumOfAllTimeDiffs() const
 {
   double time = 0;
@@ -253,7 +253,7 @@ double TimedElasticBand::getSumOfAllTimeDiffs() const
   }
   return time;
 }
-
+//计算以指数表示的姿态的估计转换时间。
 double TimedElasticBand::getSumOfTimeDiffsUpToIdx(int index) const
 {
   ROS_ASSERT(index<=timediff_vec_.size());
@@ -267,7 +267,7 @@ double TimedElasticBand::getSumOfTimeDiffsUpToIdx(int index) const
 
   return time;
 }
-
+//计算弹道的长度（累计欧氏距离）。
 double TimedElasticBand::getAccumulatedDistance() const
 {
   double dist = 0;
@@ -321,7 +321,7 @@ bool TimedElasticBand::initTrajectoryToGoal(const PoseSE2& start, const PoseSE2&
       ROS_DEBUG("initTEBtoGoal(): number of generated samples is less than specified by min_samples. Forcing the insertion of more samples...");
       while (sizePoses() < min_samples-1) // subtract goal point that will be added later
       {
-        // simple strategy: interpolate between the current pose and the goal
+        // simple strategy: interpolate between the current pose and the goal  简单策略：在当前姿势和目标之间进行插值。
         PoseSE2 intermediate_pose = PoseSE2::average(BackPose(), goal);
         if (max_vel_x > 0) timestep = (intermediate_pose.position()-BackPose().position()).norm()/max_vel_x;
         addPoseAndTimeDiff( intermediate_pose, timestep ); // let the optimier correct the timestep (TODO: better initialization
@@ -342,7 +342,7 @@ bool TimedElasticBand::initTrajectoryToGoal(const PoseSE2& start, const PoseSE2&
   return true;
 }
 
-
+//在给定的起始和目标姿势之间初始化一个轨迹。
 bool TimedElasticBand::initTrajectoryToGoal(const std::vector<geometry_msgs::PoseStamped>& plan, double max_vel_x, bool estimate_orient, int min_samples, bool guess_backwards_motion)
 {
   
@@ -377,7 +377,7 @@ bool TimedElasticBand::initTrajectoryToGoal(const std::vector<geometry_msgs::Pos
         {
             yaw = tf::getYaw(plan[i].pose.orientation);
         }
-        PoseSE2 intermediate_pose(plan[i].pose.position.x, plan[i].pose.position.y, yaw);
+        PoseSE2 intermediate_pose(plan[i].pose.position.x, plan[i].pose.position.y, yaw);  //中间位姿
         if (max_vel_x > 0) dt = (intermediate_pose.position()-BackPose().position()).norm()/max_vel_x;
         addPoseAndTimeDiff(intermediate_pose, dt);
     }
@@ -548,7 +548,7 @@ int TimedElasticBand::findClosestTrajectoryPose(const Obstacle& obstacle, double
 
 
 
-
+//检测是否轨迹包含曲折。
 bool TimedElasticBand::detectDetoursBackwards(double threshold) const
 {
   if (sizePoses()<2) return false;
@@ -586,7 +586,7 @@ bool TimedElasticBand::detectDetoursBackwards(double threshold) const
 
 
 
-
+//热启动从现有的路径与更新的开始和目标姿势。
 void TimedElasticBand::updateAndPruneTEB(boost::optional<const PoseSE2&> new_start, boost::optional<const PoseSE2&> new_goal, int min_samples)
 {
   // first and simple approach: change only start confs (and virtual start conf for inital velocity)
@@ -631,7 +631,7 @@ void TimedElasticBand::updateAndPruneTEB(boost::optional<const PoseSE2&> new_sta
   }
 };
 
-
+//检查所有轨迹点是否包含在特定区域内
 bool TimedElasticBand::isTrajectoryInsideRegion(double radius, double max_dist_behind_robot, int skip_poses)
 {
     if (sizePoses()<=0)
@@ -648,7 +648,7 @@ bool TimedElasticBand::isTrajectoryInsideRegion(double radius, double max_dist_b
         
         if (dist_sq > radius_sq)
         {
-            ROS_INFO("outside robot");
+            ROS_INFO("outside robot");  
             return false;
         }
         

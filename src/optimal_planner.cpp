@@ -144,18 +144,18 @@ void TebOptimalPlanner::registerG2OTypes()
  * initialize g2o optimizer. Set solver settings here.
  * Return: pointer to new SparseOptimizer Object.
  */
-boost::shared_ptr<g2o::SparseOptimizer> TebOptimalPlanner::initOptimizer()
+boost::shared_ptr<g2o::SparseOptimizer> TebOptimalPlanner::initOptimizer() //构造求解器
 {
   // Call register_g2o_types once, even for multiple TebOptimalPlanner instances (thread-safe)
   static boost::once_flag flag = BOOST_ONCE_INIT;
   boost::call_once(&registerG2OTypes, flag);  
 
-  // allocating the optimizer
+  // allocating the optimizer 分配优化器
   boost::shared_ptr<g2o::SparseOptimizer> optimizer = boost::make_shared<g2o::SparseOptimizer>();
   TEBLinearSolver* linearSolver = new TEBLinearSolver(); // see typedef in optimization.h
   linearSolver->setBlockOrdering(true);
   TEBBlockSolver* blockSolver = new TEBBlockSolver(linearSolver);
-  g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(blockSolver);
+  g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(blockSolver);  //L-M下降
 
   optimizer->setAlgorithm(solver);
   
@@ -164,10 +164,11 @@ boost::shared_ptr<g2o::SparseOptimizer> TebOptimalPlanner::initOptimizer()
   return optimizer;
 }
 
-
+//优化先前初始化轨迹，初始化轨迹即为被切掉后的剩余的全局路径点集
 bool TebOptimalPlanner::optimizeTEB(int iterations_innerloop, int iterations_outerloop, bool compute_cost_afterwards,
                                     double obst_cost_scale, double viapoint_cost_scale, bool alternative_time_cost)
 {
+  //ROS_INFO("[DART],OptimizeTEB");
   if (cfg_->optim.optimization_activate==false) 
     return false;
   
@@ -191,13 +192,13 @@ bool TebOptimalPlanner::optimizeTEB(int iterations_innerloop, int iterations_out
 
     }
 
-    success = buildGraph(weight_multiplier);
+    success = buildGraph(weight_multiplier);  //构建图
     if (!success) 
     {
         clearGraph();
         return false;
     }
-    success = optimizeGraph(iterations_innerloop, false);
+    success = optimizeGraph(iterations_innerloop, false);  //优化图
     if (!success) 
     {
         clearGraph();
@@ -215,7 +216,7 @@ bool TebOptimalPlanner::optimizeTEB(int iterations_innerloop, int iterations_out
 
   return true;
 }
-
+//在路径的起始姿态（例如机器人的速度）设定初始速度。 
 void TebOptimalPlanner::setVelocityStart(const geometry_msgs::Twist& vel_start)
 {
   vel_start_.first = true;
@@ -223,7 +224,7 @@ void TebOptimalPlanner::setVelocityStart(const geometry_msgs::Twist& vel_start)
   vel_start_.second.linear.y = vel_start.linear.y;
   vel_start_.second.angular.z = vel_start.angular.z;
 }
-
+//在路径的目标姿态上设定期望的最终速度。
 void TebOptimalPlanner::setVelocityGoal(const geometry_msgs::Twist& vel_goal)
 {
   vel_goal_.first = true;
@@ -231,9 +232,11 @@ void TebOptimalPlanner::setVelocityGoal(const geometry_msgs::Twist& vel_goal)
 }
 
 bool TebOptimalPlanner::plan(const std::vector<geometry_msgs::PoseStamped>& initial_plan, const geometry_msgs::Twist* start_vel, bool free_goal_vel)
-{    
+{    //通过transformGlobalPlan()剔除之前的全局规划点，将初步的路径规划initial plan传到这里，这里的initial plan其实就是全局路径规划A*或Dijkstra剔除部分之后的剩余部分，
+     //再通过约束函数对这部分路径进行非线性最小二乘的优化，得到最优路径。
+  ROS_INFO("[DART],PLAN POSESTAMPED");
   ROS_ASSERT_MSG(initialized_, "Call initialize() first.");
-  if (!teb_.isInit())
+  if (!teb_.isInit()) //teb_为timed_elastic_band类的实例化对象。
   {
     // init trajectory
     teb_.initTrajectoryToGoal(initial_plan, cfg_->robot.max_vel_x, cfg_->trajectory.global_plan_overwrite_orientation, cfg_->trajectory.min_samples, cfg_->trajectory.allow_init_with_backwards_motion);
@@ -263,8 +266,9 @@ bool TebOptimalPlanner::plan(const std::vector<geometry_msgs::PoseStamped>& init
 }
 
 
-bool TebOptimalPlanner::plan(const tf::Pose& start, const tf::Pose& goal, const geometry_msgs::Twist* start_vel, bool free_goal_vel)
+bool TebOptimalPlanner::plan(const tf::Pose& start, const tf::Pose& goal, const geometry_msgs::Twist* start_vel, bool free_goal_vel) //将tf::pose类型的开始点和目标点转化为PoseSE2
 {
+  ROS_INFO("[DART],PLAN POSESE2");
   PoseSE2 start_(start);
   PoseSE2 goal_(goal);
   return plan(start_, goal_, start_vel);
@@ -272,6 +276,7 @@ bool TebOptimalPlanner::plan(const tf::Pose& start, const tf::Pose& goal, const 
 
 bool TebOptimalPlanner::plan(const PoseSE2& start, const PoseSE2& goal, const geometry_msgs::Twist* start_vel, bool free_goal_vel)
 {	
+  ROS_INFO("[DART],PLAN POSESE2");
   ROS_ASSERT_MSG(initialized_, "Call initialize() first.");
   if (!teb_.isInit())
   {
@@ -301,8 +306,9 @@ bool TebOptimalPlanner::plan(const PoseSE2& start, const PoseSE2& goal, const ge
 }
 
 
-bool TebOptimalPlanner::buildGraph(double weight_multiplier)
+bool TebOptimalPlanner::buildGraph(double weight_multiplier)  //构建图
 {
+  //ROS_INFO("[DART]BuildGraph");
   if (!optimizer_->edges().empty() || !optimizer_->vertices().empty())
   {
     ROS_WARN("Cannot build graph, because it is not empty. Call graphClear()!");
@@ -313,35 +319,37 @@ bool TebOptimalPlanner::buildGraph(double weight_multiplier)
   AddTEBVertices();
   
   // add Edges (local cost functions)
-  if (cfg_->obstacles.legacy_obstacle_association)
+  if (cfg_->obstacles.legacy_obstacle_association)   //添加静态障碍物的边
     AddEdgesObstaclesLegacy(weight_multiplier);
   else
     AddEdgesObstacles(weight_multiplier);
 
   if (cfg_->obstacles.include_dynamic_obstacles)
-    AddEdgesDynamicObstacles();
+  //ROS_INFO("[DART]ADD DynamicObs");
+  AddEdgesDynamicObstacles();   //添加动态障碍物的边
   
-  AddEdgesViaPoints();
+  AddEdgesViaPoints();   //添加跟踪全局路径轨迹的边
   
-  AddEdgesVelocity();
-  
-  AddEdgesAcceleration();
+  AddEdgesVelocity();    //添加速度优化的边
+   
+  AddEdgesAcceleration();  //添加加速度优化的边
 
-  AddEdgesTimeOptimal();	
+  AddEdgesTimeOptimal();	 //添加最小化时间差的边
   
   if (cfg_->robot.min_turning_radius == 0 || cfg_->optim.weight_kinematics_turning_radius == 0)
-    AddEdgesKinematicsDiffDrive(); // we have a differential drive robot
+    AddEdgesKinematicsDiffDrive(); // we have a differential drive robot  //添加机器人模型的边  包括差速轮和四轮机器人
   else
-    AddEdgesKinematicsCarlike(); // we have a carlike robot since the turning radius is bounded from below.
+    AddEdgesKinematicsCarlike(); // we have a carlike robot since the turning radius is bounded from below. 
 
     
-  AddEdgesPreferRotDir();
+  AddEdgesPreferRotDir();  //添加优化转弯方向的边
     
   return true;  
 }
-
+//优化图,用构造好的求解器求解
 bool TebOptimalPlanner::optimizeGraph(int no_iterations,bool clear_after)
 {
+  //ROS_INFO("[DART]OptimizeGraph");
   if (cfg_->robot.max_vel_x<0.01)
   {
     ROS_WARN("optimizeGraph(): Robot Max Velocity is smaller than 0.01m/s. Optimizing aborted...");
@@ -375,7 +383,7 @@ bool TebOptimalPlanner::optimizeGraph(int no_iterations,bool clear_after)
     
   return true;
 }
-
+//清除图。
 void TebOptimalPlanner::clearGraph()
 {
   // clear optimizer states
@@ -385,7 +393,7 @@ void TebOptimalPlanner::clearGraph()
 }
 
 
-
+//加上所有相关的顶点到图作为优化变量。 构建图优化中的顶点 
 void TebOptimalPlanner::AddTEBVertices()
 {
   // add vertices to graph
@@ -394,16 +402,16 @@ void TebOptimalPlanner::AddTEBVertices()
   for (int i=0; i<teb_.sizePoses(); ++i)
   {
     teb_.PoseVertex(i)->setId(id_counter++);
-    optimizer_->addVertex(teb_.PoseVertex(i));
-    if (teb_.sizeTimeDiffs()!=0 && i<teb_.sizeTimeDiffs())
+    optimizer_->addVertex(teb_.PoseVertex(i));//添加机器人图的节点，即机器人姿态
+   if (teb_.sizeTimeDiffs()!=0 && i<teb_.sizeTimeDiffs())
     {
       teb_.TimeDiffVertex(i)->setId(id_counter++);
-      optimizer_->addVertex(teb_.TimeDiffVertex(i));
-    }
+      optimizer_->addVertex(teb_.TimeDiffVertex(i));//添加机器人图的节点，即时间
+    } 
   } 
 }
 
-
+//添加与静止障碍物保持距离相关的所有边值（局部代价函数） 
 void TebOptimalPlanner::AddEdgesObstacles(double weight_multiplier)
 {
   if (cfg_->optim.weight_obstacle==0 || weight_multiplier==0 || obstacles_==nullptr )
@@ -453,7 +461,7 @@ void TebOptimalPlanner::AddEdgesObstacles(double weight_multiplier)
           if (dist > cfg_->obstacles.min_obstacle_dist*cfg_->obstacles.obstacle_association_cutoff_factor)
             continue;
           
-          // determine side (left or right) and assign obstacle if closer than the previous one
+          // determine side (left or right) and assign obstacle if closer than the previous one确定侧（左或右）和分配障碍，如果比前一个更近
           if (cross2d(pose_orient, obst->getCentroid()) > 0) // left
           {
               if (dist < left_min_dist)
@@ -481,7 +489,7 @@ void TebOptimalPlanner::AddEdgesObstacles(double weight_multiplier)
                 dist_bandpt_obst->setVertex(0,teb_.PoseVertex(i));
                 dist_bandpt_obst->setInformation(information_inflated);
                 dist_bandpt_obst->setParameters(*cfg_, robot_model_.get(), left_obstacle);
-                optimizer_->addEdge(dist_bandpt_obst);
+                optimizer_->addEdge(dist_bandpt_obst);//像图优化中添加边，在teb中图的节点vertexs是橡皮筋的状态（机器人姿态+时间），图的边edges是我们自己定义的优化目标函数
             }
             else
             {
@@ -536,7 +544,7 @@ void TebOptimalPlanner::AddEdgesObstacles(double weight_multiplier)
         
 }
 
-
+//添加与静态障碍保持距离相关的边
 void TebOptimalPlanner::AddEdgesObstaclesLegacy(double weight_multiplier)
 {
   if (cfg_->optim.weight_obstacle==0 || weight_multiplier==0 || obstacles_==nullptr)
@@ -631,7 +639,7 @@ void TebOptimalPlanner::AddEdgesObstaclesLegacy(double weight_multiplier)
   }
 }
 
-
+//添加与动态（移动）障碍保持距离相关的所有边（局部代价函数）。 
 void TebOptimalPlanner::AddEdgesDynamicObstacles(double weight_multiplier)
 {
   if (cfg_->optim.weight_obstacle==0 || weight_multiplier==0 || obstacles_==NULL )
@@ -655,12 +663,12 @@ void TebOptimalPlanner::AddEdgesDynamicObstacles(double weight_multiplier)
       dynobst_edge->setVertex(0,teb_.PoseVertex(i));
       dynobst_edge->setInformation(information);
       dynobst_edge->setParameters(*cfg_, robot_model_.get(), obst->get());
-      optimizer_->addEdge(dynobst_edge);
+      optimizer_->addEdge(dynobst_edge);//添加避开障碍物的优化函数
       time += teb_.TimeDiff(i); // we do not need to check the time diff bounds, since we iterate to "< sizePoses()-1".
     }
   }
 }
-
+//添加跟踪全局路劲轨迹的边
 void TebOptimalPlanner::AddEdgesViaPoints()
 {
   if (cfg_->optim.weight_viapoint==0 || via_points_==NULL || via_points_->empty() )
@@ -696,7 +704,7 @@ void TebOptimalPlanner::AddEdgesViaPoints()
     optimizer_->addEdge(edge_viapoint);   
   }
 }
-
+//添加所有边（局部代价函数）来限制平移和角速度。
 void TebOptimalPlanner::AddEdgesVelocity()
 {
   if (cfg_->robot.max_vel_y == 0) // non-holonomic robot
@@ -719,7 +727,7 @@ void TebOptimalPlanner::AddEdgesVelocity()
       velocity_edge->setVertex(2,teb_.TimeDiffVertex(i));
       velocity_edge->setInformation(information);
       velocity_edge->setTebConfig(*cfg_);
-      optimizer_->addEdge(velocity_edge);
+      optimizer_->addEdge(velocity_edge);  //添加速度优化约束函数
     }
   }
   else // holonomic-robot
@@ -747,7 +755,7 @@ void TebOptimalPlanner::AddEdgesVelocity()
     
   }
 }
-
+//添加所有边（局部代价函数）来限制平移和角加速度。
 void TebOptimalPlanner::AddEdgesAcceleration()
 {
   if (cfg_->optim.weight_acc_lim_x==0  && cfg_->optim.weight_acc_lim_theta==0) 
@@ -853,7 +861,7 @@ void TebOptimalPlanner::AddEdgesAcceleration()
 }
 
 
-
+//为最小化转换时间添加所有边（局部代价函数）。最小化时间差）
 void TebOptimalPlanner::AddEdgesTimeOptimal()
 {
   if (cfg_->optim.weight_optimaltime==0) 
@@ -873,29 +881,29 @@ void TebOptimalPlanner::AddEdgesTimeOptimal()
 }
 
 
-
+//满足差分驱动机器人运动约束的全边（局部代价函数）
 void TebOptimalPlanner::AddEdgesKinematicsDiffDrive()
 {
   if (cfg_->optim.weight_kinematics_nh==0 && cfg_->optim.weight_kinematics_forward_drive==0)
-    return; // if weight equals zero skip adding edges!
+    return; // if weight equals zero skip adding edges!  
   
   // create edge for satisfiying kinematic constraints
   Eigen::Matrix<double,2,2> information_kinematics;
-  information_kinematics.fill(0.0);
-  information_kinematics(0, 0) = cfg_->optim.weight_kinematics_nh;
-  information_kinematics(1, 1) = cfg_->optim.weight_kinematics_forward_drive;
+  information_kinematics.fill(0.0);  //fill()--用0.0填满matrix
+  information_kinematics(0, 0) = cfg_->optim.weight_kinematics_nh;  //matrix第一行第一个元素
+  information_kinematics(1, 1) = cfg_->optim.weight_kinematics_forward_drive; //matrix第二行第二个元素
   
   for (int i=0; i < teb_.sizePoses()-1; i++) // ignore twiced start only
   {
     EdgeKinematicsDiffDrive* kinematics_edge = new EdgeKinematicsDiffDrive;
-    kinematics_edge->setVertex(0,teb_.PoseVertex(i));
-    kinematics_edge->setVertex(1,teb_.PoseVertex(i+1));      
-    kinematics_edge->setInformation(information_kinematics);
+    kinematics_edge->setVertex(0,teb_.PoseVertex(i));  
+    kinematics_edge->setVertex(1,teb_.PoseVertex(i+1));   //设置此边所连接的两个顶点     
+    kinematics_edge->setInformation(information_kinematics); //设置此边的信息矩阵
     kinematics_edge->setTebConfig(*cfg_);
-    optimizer_->addEdge(kinematics_edge);
+    optimizer_->addEdge(kinematics_edge);  //optimizer_为g2o构造的求解器，添加此边到图
   }	 
 }
-
+//添加所有的边（本地成本函数）为满足一个轮式机器人运动学约束
 void TebOptimalPlanner::AddEdgesKinematicsCarlike()
 {
   if (cfg_->optim.weight_kinematics_nh==0 && cfg_->optim.weight_kinematics_turning_radius)
@@ -918,11 +926,11 @@ void TebOptimalPlanner::AddEdgesKinematicsCarlike()
   }  
 }
 
-
+//添加边，为优选一个指定的转弯方向（通过惩罚另一个）
 void TebOptimalPlanner::AddEdgesPreferRotDir()
 {
   if (prefer_rotdir_ == RotType::none || cfg_->optim.weight_prefer_rotdir==0)
-    return; // if weight equals zero skip adding edges!
+    return; // if weight equals zero skip adding edges! 如果权重为0，则跳过添加边
   
   // create edge for satisfiying kinematic constraints
   Eigen::Matrix<double,1,1> information_rotdir;
@@ -943,7 +951,7 @@ void TebOptimalPlanner::AddEdgesPreferRotDir()
     optimizer_->addEdge(rotdir_edge);
   }
 }
-
+//[DART]应该是添加障碍物，跟踪全局路径和规划时间的信息矩阵，即权值
 void TebOptimalPlanner::computeCurrentCost(double obst_cost_scale, double viapoint_cost_scale, bool alternative_time_cost)
 { 
   // check if graph is empty/exist  -> important if function is called between buildGraph and optimizeGraph/clearGraph
@@ -1045,7 +1053,7 @@ void TebOptimalPlanner::computeCurrentCost(double obst_cost_scale, double viapoi
     clearGraph();
 }
 
-
+//[DART]从两个规划好的局部路径和时间段内，根据局部路径规划机器人的实时速度
 void TebOptimalPlanner::extractVelocity(const PoseSE2& pose1, const PoseSE2& pose2, double dt, double& vx, double& vy, double& omega) const
 {
   if (dt == 0)
@@ -1062,8 +1070,8 @@ void TebOptimalPlanner::extractVelocity(const PoseSE2& pose1, const PoseSE2& pos
   {
     Eigen::Vector2d conf1dir( cos(pose1.theta()), sin(pose1.theta()) );
     // translational velocity
-    double dir = deltaS.dot(conf1dir);
-    vx = (double) g2o::sign(dir) * deltaS.norm()/dt;
+    double dir = deltaS.dot(conf1dir);//点乘(x,y).dot(a,b) = xa+yb
+    vx = (double) g2o::sign(dir) * deltaS.norm()/dt;  //(x,y).norm() =根号(x^2+y^2) ;sign(dir)：dir为正返回1，为负返回-1，为0返回0
     vy = 0;
   }
   else // holonomic robot
@@ -1083,7 +1091,7 @@ void TebOptimalPlanner::extractVelocity(const PoseSE2& pose1, const PoseSE2& pos
   double orientdiff = g2o::normalize_theta(pose2.theta() - pose1.theta());
   omega = orientdiff/dt;
 }
-
+//[DART]从规划好的相邻两个局部路径中规划机器人的实时速度信息
 bool TebOptimalPlanner::getVelocityCommand(double& vx, double& vy, double& omega) const
 {
   if (teb_.sizePoses()<2)
@@ -1109,7 +1117,7 @@ bool TebOptimalPlanner::getVelocityCommand(double& vx, double& vy, double& omega
   extractVelocity(teb_.Pose(0), teb_.Pose(1), dt, vx, vy, omega);
   return true;
 }
-
+//[DART]计算弹道速度剖面,暂时未用到
 void TebOptimalPlanner::getVelocityProfile(std::vector<geometry_msgs::Twist>& velocity_profile) const
 {
   int n = teb_.sizePoses();
@@ -1136,7 +1144,7 @@ void TebOptimalPlanner::getVelocityProfile(std::vector<geometry_msgs::Twist>& ve
   velocity_profile.back().linear.y = vel_goal_.second.linear.y;
   velocity_profile.back().angular.z = vel_goal_.second.angular.z;
 }
-
+//[DART]返回完整的轨迹，包括姿态、速度剖面和时间信息。暂时未用到
 void TebOptimalPlanner::getFullTrajectory(std::vector<TrajectoryPointMsg>& trajectory) const
 {
   int n = teb_.sizePoses();
@@ -1185,11 +1193,11 @@ void TebOptimalPlanner::getFullTrajectory(std::vector<TrajectoryPointMsg>& traje
   goal.velocity.angular.x = goal.velocity.angular.y = 0;
   goal.velocity.linear.x = vel_goal_.second.linear.x;
   goal.velocity.linear.y = vel_goal_.second.linear.y;
-  goal.velocity.angular.z = vel_goal_.second.angular.z;
+  goal.velocity.angular.z = vel_goal_.second.angular.z;  
   goal.time_from_start.fromSec(curr_time);
 }
 
-
+//[DART]判断规划的速度是否符合要求，即是否存在障碍物的碰撞，独立与TEB局部路径规划之外
 bool TebOptimalPlanner::isTrajectoryFeasible(base_local_planner::CostmapModel* costmap_model, const std::vector<geometry_msgs::Point>& footprint_spec,
                                              double inscribed_radius, double circumscribed_radius, int look_ahead_idx)
 {
@@ -1218,7 +1226,7 @@ bool TebOptimalPlanner::isTrajectoryFeasible(base_local_planner::CostmapModel* c
   return true;
 }
 
-
+//[DART]暂时未用到
 bool TebOptimalPlanner::isHorizonReductionAppropriate(const std::vector<geometry_msgs::PoseStamped>& initial_plan) const
 {
   if (teb_.sizePoses() < int( 1.5*double(cfg_->trajectory.min_samples) ) ) // trajectory is short already

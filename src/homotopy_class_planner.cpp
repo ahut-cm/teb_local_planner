@@ -106,7 +106,7 @@ bool HomotopyClassPlanner::plan(const tf::Pose& start, const tf::Pose& goal, con
 bool HomotopyClassPlanner::plan(const PoseSE2& start, const PoseSE2& goal, const geometry_msgs::Twist* start_vel, bool free_goal_vel)
 {
   ROS_ASSERT_MSG(initialized_, "Call initialize() first.");
-
+  ROS_INFO("[DART],HomotopyClass");
   // Update old TEBs with new start, goal and velocity
   updateAllTEBs(&start, &goal, start_vel);
 
